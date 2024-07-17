@@ -1,0 +1,89 @@
+import backtrader as bt
+import yfinance as yf
+import pandas as pd
+
+# Define the strategy
+class BB_RSI_Strategy(bt.Strategy):
+    params = (
+        ('bb_period', 20),
+        ('bb_dev', 2),
+        ('rsi_period', 14),
+        ('rsi_lower', 30),
+        ('rsi_upper', 70),
+        ('risk_reward_ratio', 2),
+    )
+
+    def __init__(self):
+        self.bbands = bt.indicators.BBands(self.data.close, period=self.params.bb_period, devfactor=self.params.bb_dev)
+        self.rsi = bt.indicators.RSI(self.data.close, period=self.params.rsi_period)
+
+    def next(self):
+        if not self.position:  # Only enter a trade if there's no open position
+            if self.data.close[0] < self.bbands.lines.bot[0] and self.rsi < self.params.rsi_lower:
+                # Buy signal
+                self.buy()
+                self.buy_price = self.data.close[0]
+                self.stop_loss = self.data.low[0]
+                self.take_profit = self.data.close[0] + self.params.risk_reward_ratio * (self.data.close[0] - self.data.low[0])
+
+            elif self.data.close[0] > self.bbands.lines.top[0] and self.rsi > self.params.rsi_upper:
+                # Sell signal
+                self.sell()
+                self.sell_price = self.data.close[0]
+                self.stop_loss = self.data.high[0]
+                self.take_profit = self.data.close[0] - self.params.risk_reward_ratio * (self.data.high[0] - self.data.close[0])
+
+        else:
+            if self.position.size > 0:  # If we are in a buy position
+                if self.data.close[0] >= self.take_profit or self.data.close[0] <= self.stop_loss:
+                    self.close()
+
+            elif self.position.size < 0:  # If we are in a sell position
+                if self.data.close[0] <= self.take_profit or self.data.close[0] >= self.stop_loss:
+                    self.close()
+
+# Define data loading function
+def get_data(symbol, start, end):
+    data = yf.download(symbol, start=start, end=end, interval='1h')
+    return data
+
+# Main function for backtesting
+def run_backtest():
+    symbol = 'BTC-USD'
+    start_date = '2024-06-01'
+    end_date = '2024-06-30'
+
+    # Download data
+    data = get_data(symbol, start=start_date, end=end_date)
+
+    # Prepare data for Backtrader
+    data_feed = bt.feeds.PandasData(dataname=data)
+
+    # Initialize the backtest engine
+    cerebro = bt.Cerebro()
+    cerebro.addstrategy(BB_RSI_Strategy)
+    cerebro.adddata(data_feed)
+    cerebro.broker.setcommission(commission=0.0)  # No commission
+
+    # Add the TradeAnalyzer
+    cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name='tradeanalyzer')
+
+    # Run the backtest
+    backtest_result = cerebro.run()
+    strategy = backtest_result[0]
+
+    # Get the analysis results
+    analysis = strategy.analyzers.tradeanalyzer.get_analysis()
+    total_trades = analysis.total.total
+    total_wins = analysis.won.total
+    total_losses = analysis.lost.total
+    win_rate = (total_wins / total_trades) * 100 if total_trades > 0 else 0
+
+    # Print results
+    print(f"Total Trades: {total_trades}")
+    print(f"Total Winning Trades: {total_wins}")
+    print(f"Total Losing Trades: {total_losses}")
+    print(f"Win Rate: {win_rate:.2f}%")
+
+if __name__ == '__main__':
+    run_backtest()
